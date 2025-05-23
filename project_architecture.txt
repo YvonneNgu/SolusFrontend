@@ -1,0 +1,173 @@
+# Solus Voice Assistant - Project Architecture
+
+## Overview
+
+Solus Voice Assistant is an Android application that integrates with LiveKit to provide voice assistant functionality. The application uses a wake word detection system to activate the voice assistant, captures screenshots of the current UI state, and manages conversations with an AI agent through LiveKit's voice assistant APIs.
+
+## Project Structure
+
+```
+com.example.solusfrontend/
+├── MainActivity.kt             # Main entry point and UI controller
+├── SolusApp.kt                 # Application class for initialization
+├── config/                     # Configuration management
+│   └── AppConfig.kt            # App-wide settings and preferences
+├── livekit/                    # LiveKit integration
+│   └── LiveKitManager.kt       # Manages LiveKit connections and tokens
+├── network/                    # Networking components
+│   ├── api/                    # API interfaces
+│   │   └── TokenServerApi.kt   # Retrofit API for token server
+│   ├── models/                 # Data models
+│   │   └── TokenModels.kt      # Request/response models for tokens
+│   ├── RetrofitClient.kt       # HTTP client configuration
+│   └── TokenRepository.kt      # Repository for token operations
+├── utils/                      # Utility classes
+│   ├── AssetUtils.kt           # Asset file management
+│   └── ScreenshotManager.kt    # Screenshot capture and transmission
+├── wakeword/                   # Wake word detection
+│   └── WakeWordDetector.kt     # Porcupine wake word detection
+├── docs/                       # Documentation
+│   └── LOGGING_GUIDE.md        # Timber logging guidelines
+└── receivers/                  # Broadcast receivers (if any)
+```
+
+## Core Components
+
+### 1. Application Initialization (SolusApp.kt)
+
+The `SolusApp` class initializes core components of the application:
+
+- **Timber logging**: Sets up logging for debug/release builds using Timber
+- **App configuration**: Initializes the `AppConfig` with default values
+- **LiveKit integration**: Configures LiveKit debugging levels
+
+### 2. Configuration Management (AppConfig.kt)
+
+The `AppConfig` singleton manages application-wide settings using `SharedPreferences`:
+
+- **Server URLs**: Token server and LiveKit server URLs
+- **User information**: Identity, room name, display name
+- **Persistence**: Saves/retrieves settings between app launches
+
+### 3. Voice Assistant Management (MainActivity.kt)
+
+The `MainActivity` orchestrates the core voice assistant functionality:
+
+- **Permission handling**: Requests microphone and internet permissions
+- **Wake word detection**: Initializes and manages the wake word detector
+- **LiveKit integration**: Connects to LiveKit and manages the voice assistant session
+- **UI rendering**: Displays the voice assistant interface using Jetpack Compose
+- **Conversation handling**: Manages the conversation flow with state tracking
+
+### 4. Wake Word Detection (WakeWordDetector.kt)
+
+The `WakeWordDetector` class handles always-on listening for a wake word:
+
+- **Porcupine integration**: Uses the Porcupine library for wake word detection
+- **Wake word callback**: Notifies the MainActivity when the wake word is detected
+- **Lifecycle management**: Handles starting, stopping, and releasing resources
+
+### 5. LiveKit Integration (LiveKitManager.kt)
+
+The `LiveKitManager` handles communication with LiveKit services:
+
+- **Token management**: Obtains authentication tokens from the token server
+- **Connection management**: Manages connections to LiveKit rooms
+- **Agent integration**: Supports both Solus agent and custom agent connections
+
+### 6. Network Stack (network/)
+
+The networking layer handles communication with the token server:
+
+- **TokenServerApi**: Retrofit interface for token server endpoints
+- **TokenRepository**: Repository for token operations with error handling
+- **RetrofitClient**: Configures HTTP client with timeouts and converters
+- **Token Models**: Data models for token requests and responses
+
+### 7. Screenshot Management (ScreenshotManager.kt)
+
+The `ScreenshotManager` captures and transmits screenshots to the voice assistant:
+
+- **Capture functionality**: Creates bitmap screenshots of the current UI
+- **Transmission**: Sends screenshots to LiveKit using data channels
+- **Compatibility**: Handles different versions of LiveKit APIs through reflection
+
+### 8. Asset Management (AssetUtils.kt)
+
+The `AssetUtils` class handles asset file operations:
+
+- **Asset extraction**: Extracts wake word model from assets to app files directory
+- **File management**: Manages file existence checks and copying
+
+## Data Flow
+
+### 1. Application Startup
+
+1. `SolusApp` initializes and sets up Timber logging
+2. `AppConfig` is initialized with default values or stored preferences
+3. `MainActivity` is launched as the entry point
+
+### 2. Voice Assistant Activation
+
+1. `WakeWordDetector` continuously listens for the wake word
+2. When detected, it calls back to `MainActivity`
+3. `MainActivity` stops wake word detection and prepares for voice assistant activation
+4. Voice assistant is activated through LiveKit's Compose components
+
+### 3. Token Acquisition
+
+1. `MainActivity` requests a token via `LiveKitManager`
+2. `LiveKitManager` calls `TokenRepository` to retrieve a token
+3. `TokenRepository` makes an API request through `TokenServerApi`
+4. Token is returned to `MainActivity` for LiveKit connection
+
+### 4. Voice Assistant Interaction
+
+1. User speaks to the voice assistant
+2. LiveKit captures audio and sends it to the voice assistant service
+3. `ScreenshotManager` captures and sends UI screenshots during processing
+4. Voice assistant responds, and the response is played back
+5. Conversation continues until completed
+6. Wake word detection is reactivated after conversation ends
+
+## Key Technologies
+
+1. **LiveKit SDK**: For voice assistant connectivity and state management
+2. **Porcupine**: For wake word detection functionality
+3. **Jetpack Compose**: For UI rendering and LiveKit integration
+4. **Retrofit**: For API communication with the token server
+5. **Timber**: For application-wide logging
+6. **Kotlin Coroutines**: For asynchronous operations
+
+## Logging Strategy
+
+The application uses Timber for consistent logging:
+
+- **Debug builds**: All log levels are displayed
+- **Release builds**: Only ERROR level and above are logged
+- **Lambda syntax**: All logs use the lambda syntax for performance
+- **Tagged logging**: Logs are tagged with component names for filtering
+- **Exception tracking**: Exceptions are properly recorded with stack traces
+
+## Configuration and Customization
+
+The application can be customized through:
+
+1. **SharedPreferences**: User and server settings
+2. **Asset Replacement**: The wake word model can be replaced
+3. **Token Server**: Different token server URLs can be configured
+
+## Security Considerations
+
+1. **Access keys**: Porcupine access key is stored in the code but should be secured
+2. **Token generation**: LiveKit tokens are generated on a secure server
+3. **Permissions**: Only essential permissions are requested
+4. **Release logging**: Sensitive information is not logged in release builds
+
+## Debugging and Testing
+
+The application supports:
+
+1. **Comprehensive logging**: Through Timber for debugging
+2. **LiveKit logging levels**: Configurable for additional LiveKit debugging
+3. **Visual feedback**: UI states reflect the current voice assistant state
