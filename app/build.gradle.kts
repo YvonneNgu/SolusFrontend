@@ -1,3 +1,4 @@
+import org.gradle.kotlin.dsl.libs
 import java.util.Properties
 import java.io.FileInputStream
 
@@ -76,6 +77,9 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel)
+    implementation(libs.androidx.lifecycle.common)
+    implementation(libs.androidx.savedstate.ktx)
     
     // Jetpack Compose
     implementation(platform(libs.androidx.compose.bom))

@@ -6,6 +6,18 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Allow drawing overlays on top of other apps (required for system-wide UI) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Allow running foreground services (keeps voice assistant alive in background) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- For Android 9+ foreground service types -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Wake lock to keep CPU active while listening for wake word -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Auto-start after boot (optional - if you want voice assistant to start automatically) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -27,6 +39,29 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".VoiceAssistantOverlayService"
+            android:foregroundServiceType="microphone"
+            android:enabled="true"
+            android:exported="false">
+            <!--
+            foregroundServiceType="microphone" tells Android this service uses the microphone
+            This is required for Android 10+ when using microphone in foreground services
+            -->
+        </service>
+
+        <!-- Boot receiver to auto-start voice assistant after device restart -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
