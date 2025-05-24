@@ -41,7 +41,6 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.savedstate.findViewTreeSavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -278,7 +277,10 @@ class VoiceAssistantOverlayService : Service(),
                     connectionUrl = connectionUrl!!,
                     connectionToken = connectionToken!!,
                     isMicOn = isMicOn,
-                    onMicToggle = { isMicOn = !isMicOn },
+                    onMicToggle = {
+                        isMicOn = !isMicOn
+                        Timber.i { "Mic toggled: isMicOn=$isMicOn" }
+                    },
                     onClose = { closeVoiceAssistant() }
                 )
             }
@@ -427,6 +429,27 @@ class VoiceAssistantOverlayService : Service(),
                     // Update activity time when agent state changes
                     LaunchedEffect(agentState) {
                         lastActivityTime = System.currentTimeMillis()
+                    }
+
+                    // Control recording based on mic state
+                    LaunchedEffect(isMicOn) {
+                        if (isMicOn) {
+                            // Start/resume recording
+                            try {
+                                room.localParticipant.setMicrophoneEnabled(true)
+                                Timber.i { "Microphone enabled - recording started" }
+                            } catch (e: Exception) {
+                                Timber.e { "Failed to enable microphone: $e" }
+                            }
+                        } else {
+                            // Stop recording
+                            try {
+                                room.localParticipant.setMicrophoneEnabled(false)
+                                Timber.i { "Microphone disabled - recording stopped" }
+                            } catch (e: Exception) {
+                                Timber.e { "Failed to disable microphone: $e" }
+                            }
+                        }
                     }
 
                     // Auto-close after inactivity
