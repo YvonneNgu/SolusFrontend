@@ -10,7 +10,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Allow running foreground services (keeps voice assistant alive in background) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- For Android 9+ foreground service types -->
+    <!-- For Android 9+ foreground services types -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Wake lock to keep CPU active while listening for wake word -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -39,13 +39,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- Screen Capture Permission Activity -->
+        <activity
+            android:name=".services.overlay.ScreenCaptureActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false" />
+            
         <service
-            android:name=".VoiceAssistantOverlayService"
+            android:name=".services.overlay.VoiceAssistantOverlayService"
             android:foregroundServiceType="microphone"
             android:enabled="true"
             android:exported="false">
             <!--
-            foregroundServiceType="microphone" tells Android this service uses the microphone
+            foregroundServiceType="microphone" tells Android this services uses the microphone
             This is required for Android 10+ when using microphone in foreground services
             -->
         </service>

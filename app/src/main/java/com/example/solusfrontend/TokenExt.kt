@@ -13,6 +13,73 @@ import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
 
+fun ComponentActivity.requireToken(
+    userName: String? = null,   // Optional: Display name
+    onTokenGenerated: (url: String, token: String) -> Unit
+) {
+    val identity = "user123"  // Replace with dynamic user ID if needed
+    val activity = this
+
+    val tokenServerUrl = BuildConfig.TOKEN_SERVER_URL
+    val livekitUrl = BuildConfig.LIVEKIT_URL
+
+    val client = OkHttpClient()
+
+    // Build GET URL with query parameter
+    val request = Request.Builder()
+        .url("${tokenServerUrl}api/get-token?participant=$identity")
+        .get()
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            runOnUiThread {
+                Toast.makeText(
+                    activity,
+                    "Failed to connect to token server. Check if backend is running.",
+                    Toast.LENGTH_LONG
+                ).show()
+                Timber.e { "Token request failed: ${e.message}" }
+            }
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            response.body?.let { responseBody ->
+                if (response.isSuccessful) {
+                    try {
+                        val json = responseBody.string()
+                        val jsonObject = JSONObject(json)
+                        val token = jsonObject.getString("token")
+
+                        runOnUiThread {
+                            onTokenGenerated(livekitUrl, token)
+                            Timber.i { "Successfully got token for participant: $identity" }
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                activity,
+                                "Invalid server response. Check backend JSON.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            Timber.e { "Failed to parse token response: ${e.message}" }
+                        }
+                    }
+                } else {
+                    runOnUiThread {
+                        Toast.makeText(
+                            activity,
+                            "Token generation failed: HTTP ${response.code}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        Timber.e { "Token server responded with status: ${response.code}" }
+                    }
+                }
+            }
+        }
+    })
+}
+
 /**
  * TOKEN GENERATOR - Gets access token from YOUR Python backend server
  *
@@ -21,6 +88,7 @@ import java.io.IOException
  *
  * Your backend controls who can join which rooms and with what permissions.
  */
+/*
 fun ComponentActivity.requireToken(
     userName: String? = null,   // Optional: Display name for the user
     metadata: String = "",      // Optional: Any extra data about the user
@@ -154,7 +222,7 @@ fun ComponentActivity.requireToken(
             }
         }
     })
-}
+}*/
 
 /**
  * SIMPLIFIED EXPLANATION:
@@ -176,3 +244,84 @@ fun ComponentActivity.requireToken(
  * - We give user-friendly error messages instead of crashing
  * - In production, you'd have your own secure server instead of using LiveKit's sandbox
  */
+
+/**
+ * Service version of requireToken - for use in non-Activity contexts
+ * 
+ * This version allows services like VoiceAssistantOverlayService to get tokens
+ * without needing to be a ComponentActivity.
+ */
+fun android.app.Service.requireToken(
+    userName: String? = null,   // Optional: Display name
+    onTokenGenerated: (url: String, token: String) -> Unit
+) {
+    val identity = userName ?: "user123"  // Use provided name or default
+    val service = this
+
+    val tokenServerUrl = BuildConfig.TOKEN_SERVER_URL
+    val livekitUrl = BuildConfig.LIVEKIT_URL
+
+    val client = OkHttpClient()
+
+    // Build GET URL with query parameter
+    val request = Request.Builder()
+        .url("${tokenServerUrl}api/get-token?participant=$identity")
+        .get()
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            // Cannot use runOnUiThread in a Service
+            Timber.e { "Token request failed: ${e.message}" }
+            
+            // Show error toast on main thread
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(
+                    service,
+                    "Failed to connect to token server. Check if backend is running.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            response.body?.let { responseBody ->
+                if (response.isSuccessful) {
+                    try {
+                        val json = responseBody.string()
+                        val jsonObject = JSONObject(json)
+                        val token = jsonObject.getString("token")
+
+                        // Use handler to post to main thread
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            onTokenGenerated(livekitUrl, token)
+                            Timber.i { "Successfully got token for participant: $identity" }
+                        }
+                    } catch (e: Exception) {
+                        Timber.e { "Failed to parse token response: ${e.message}" }
+                        
+                        // Show error toast on main thread
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(
+                                service,
+                                "Invalid server response. Check backend JSON.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                } else {
+                    Timber.e { "Token server responded with status: ${response.code}" }
+                    
+                    // Show error toast on main thread
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            service,
+                            "Token generation failed: HTTP ${response.code}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+    })
+}

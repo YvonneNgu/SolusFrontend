@@ -1,7 +1,7 @@
 @file:OptIn(Beta::class)
 
 package com.example.solusfrontend
-//Some import
+
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -44,6 +45,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.solusfrontend.services.overlay.VoiceAssistantOverlayService
+import com.example.solusfrontend.utils.PreferencesManager
 import com.github.ajalt.timberkt.Timber
 import io.livekit.android.LiveKit
 import io.livekit.android.annotations.Beta
@@ -51,19 +54,18 @@ import com.example.solusfrontend.ui.theme.LiveKitVoiceAssistantExampleTheme
 import io.livekit.android.util.LoggingLevel
 
 /**
- * Enhanced Main Activity - Now manages background voice assistant service
- * The main app now focuses on setup and controlling the background service
+ * Enhanced Main Activity - Now manages background voice assistant services
+ * The main app now focuses on setup and controlling the background services
  * Think of this as the control center for your voice assistant
  */
 class MainActivity : ComponentActivity() {
 
-    // Track service state
+    // Track services state
     private var isServiceRunning by mutableStateOf(false)
     private var hasOverlayPermission by mutableStateOf(false)
-
-    // Store connection details
-    private var connectionUrl: String? = null
-    private var connectionToken: String? = null
+    
+    // Preferences manager for persistent storage
+    private lateinit var prefsManager: PreferencesManager
 
     /**
      * Permission launcher for overlay permission
@@ -74,10 +76,14 @@ class MainActivity : ComponentActivity() {
     ) { result ->
         // Check if permission was granted
         hasOverlayPermission = canDrawOverlays()
+        
+        // Mark that we've asked for overlay permission (regardless of outcome)
+        prefsManager.setOverlayPermissionRequested(true)
+        
         if (hasOverlayPermission) {
             Toast.makeText(this, "Overlay permission granted!", Toast.LENGTH_SHORT).show()
-            // If we have connection details, we can start the service now
-            if (connectionUrl != null && connectionToken != null) {
+            // If permission is granted and service is enabled in preferences, start it
+            if (prefsManager.isServiceEnabled()) {
                 startBackgroundService()
             }
         } else {
@@ -88,33 +94,67 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize preferences manager
+        prefsManager = PreferencesManager.getInstance(this)
+
         // Enable detailed logging
         LiveKit.loggingLevel = LoggingLevel.DEBUG
 
         // Check initial permissions
         hasOverlayPermission = canDrawOverlays()
-
-        // Get authentication and set up UI
-        requireNeededPermissions {
-            requireToken { url, token ->
-                // Store connection details
-                connectionUrl = url
-                connectionToken = token
-
-                // Set up the main UI
-                setContent {
-                    LiveKitVoiceAssistantExampleTheme {
-                        MainScreen(
-                            hasOverlayPermission = hasOverlayPermission,
-                            isServiceRunning = isServiceRunning,
-                            onRequestOverlayPermission = { requestOverlayPermission() },
-                            onStartBackgroundService = { startBackgroundService() },
-                            onStopBackgroundService = { stopBackgroundService() },
-                            onOpenSettings = { openAppSettings() }
-                        )
-                    }
-                }
+        
+        // Request audio permissions first - needed for voice recognition
+        requireNeededPermissions(
+            onPermissionsGranted = {
+                // Audio permissions granted, now check overlay permission
+                checkAndHandleOverlayPermission()
+            },
+            onPermissionsDenied = {
+                // Audio permissions denied, show a message
+                Toast.makeText(
+                    this,
+                    "Voice assistant requires audio permission to work",
+                    Toast.LENGTH_LONG
+                ).show()
             }
+        )
+
+        // Set up the main UI without requiring token at startup
+        setContent {
+            LiveKitVoiceAssistantExampleTheme {
+                MainScreen(
+                    hasOverlayPermission = hasOverlayPermission,
+                    isServiceRunning = isServiceRunning,
+                    onRequestOverlayPermission = { requestOverlayPermission() },
+                    onStartBackgroundService = { startBackgroundService() },
+                    onStopBackgroundService = { stopBackgroundService() },
+                    onOpenSettings = { openAppSettings() }
+                )
+            }
+        }
+    }
+    
+    /**
+     * Check and handle overlay permission based on previous requests
+     * Only shows permission dialog if we haven't asked before
+     */
+    private fun checkAndHandleOverlayPermission() {
+        if (!hasOverlayPermission) {
+            // We need overlay permission
+            if (!prefsManager.hasOverlayPermissionBeenRequested()) {
+                // We haven't asked before, so request it
+                requestOverlayPermission()
+            } else {
+                // We've asked before and user denied, so just show a message
+                Toast.makeText(
+                    this,
+                    "Overlay permission is required for background mode. Please enable it in settings.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        } else if (!isServiceRunning && prefsManager.isServiceEnabled()) {
+            // We have overlay permission, and service should be enabled based on user preference
+            startBackgroundService()
         }
     }
 
@@ -141,11 +181,10 @@ class MainActivity : ComponentActivity() {
             Uri.parse("package:$packageName")
         )
         overlayPermissionLauncher.launch(intent)
-
     }
 
     /**
-     * Start the background voice assistant service
+     * Start the background voice assistant services
      * This makes the voice assistant available system-wide
      */
     private fun startBackgroundService() {
@@ -154,50 +193,44 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        if (connectionUrl == null || connectionToken == null) {
-            Toast.makeText(this, "Connection not ready yet", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         try {
-            // Send connection details to service
-            val connectionIntent = Intent(this, VoiceAssistantOverlayService::class.java).apply {
-                action = VoiceAssistantOverlayService.ACTION_SET_CONNECTION
-                putExtra(VoiceAssistantOverlayService.EXTRA_URL, connectionUrl)
-                putExtra(VoiceAssistantOverlayService.EXTRA_TOKEN, connectionToken)
-            }
-            startService(connectionIntent)
-
-            // Start the overlay service
+            // Start the overlay service without sending connection details
+            // The service will get its own token when the wake word is detected
             val serviceIntent = Intent(this, VoiceAssistantOverlayService::class.java).apply {
                 action = VoiceAssistantOverlayService.ACTION_START_SERVICE
             }
             startForegroundService(serviceIntent)
 
+            // Update service state in both memory and persistent storage
             isServiceRunning = true
+            prefsManager.setServiceEnabled(true)
+            
             Toast.makeText(this, "Voice assistant is now running in background! Say 'Solus' to activate.", Toast.LENGTH_LONG).show()
 
-            Timber.i { "Background voice assistant service started" }
+            Timber.i { "Background voice assistant services started" }
         } catch (e: Exception) {
-            Timber.e { "Failed to start background service: $e" }
-            Toast.makeText(this, "Failed to start background service", Toast.LENGTH_SHORT).show()
+            Timber.e { "Failed to start background services: $e" }
+            Toast.makeText(this, "Failed to start background services", Toast.LENGTH_SHORT).show()
         }
     }
 
     /**
-     * Stop the background voice assistant service
+     * Stop the background voice assistant services
      * This disables system-wide voice assistant
      */
     private fun stopBackgroundService() {
         val intent = Intent(this, VoiceAssistantOverlayService::class.java).apply {
-            action = VoiceAssistantOverlayService.ACTION_STOP_SERVICE
+            action = VoiceAssistantOverlayService.Companion.ACTION_STOP_SERVICE
         }
         startService(intent)
 
+        // Update service state in both memory and persistent storage
         isServiceRunning = false
+        prefsManager.setServiceEnabled(false) // Remember that user explicitly stopped the service
+        
         Toast.makeText(this, "Background voice assistant stopped", Toast.LENGTH_SHORT).show()
 
-        Timber.i { "Background voice assistant service stopped" }
+        Timber.i { "Background voice assistant services stopped" }
     }
 
     /**
@@ -213,7 +246,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Main screen UI - Control center for the voice assistant
-     * Shows current status and provides controls for background service
+     * Shows current status and provides controls for background services
      */
     @Composable
     fun MainScreen(
@@ -295,7 +328,7 @@ class MainActivity : ComponentActivity() {
                     Text("Grant Overlay Permission")
                 }
             } else if (!isServiceRunning) {
-                // Can start background service
+                // Can start background services
                 Button(
                     onClick = onStartBackgroundService,
                     modifier = Modifier.fillMaxWidth(),
@@ -325,7 +358,7 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Instructions when service is running
+                // Instructions when services is running
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -449,11 +482,19 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Refresh permission status when app comes back to foreground
         hasOverlayPermission = canDrawOverlays()
+        
+        // Only auto-start the service if:
+        // 1. We have overlay permission
+        // 2. Service is not already running
+        // 3. User has not explicitly disabled it (checked via preferences)
+        if (hasOverlayPermission && !isServiceRunning && prefsManager.isServiceEnabled()) {
+            startBackgroundService()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // Note: We don't stop the background service here because we want it to continue
+        // Note: We don't stop the background services here because we want it to continue
         // running even when the main app is closed. Users control it through the notification
         // or by reopening the app.
     }

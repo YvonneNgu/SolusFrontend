@@ -1,4 +1,4 @@
-package com.example.solusfrontend.ui
+package com.example.solusfrontend.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
@@ -81,28 +81,3 @@ fun UserTranscription(
         }
     }
 }
-
-/**
- * SIMPLIFIED EXPLANATION:
- *
- * This component is like creating a custom sticker for each thing you say:
- *
- * 1. CONTENT: Takes your spoken words (now as text)
- * 2. STYLING: Wraps them in a nice-looking bubble with rounded corners
- * 3. ANIMATION: Makes the bubble appear smoothly with a fade-in effect
- * 4. POSITIONING: Designed to be placed on the right side of the chat
- *
- * Visual comparison:
- *
- * WITHOUT this component:     WITH this component:
- * Hello there                ╭─────────────╮
- *                            │ Hello there │
- *                            ╰─────────────╯
- *
- * The key differences from AI messages:
- * - USER: Gray bubble, right-aligned, special rounded corners
- * - AI: Plain text, left-aligned, no background
- *
- * This creates a clear visual distinction in the conversation, making it easy
- * for users to see who said what at a glance.
- */

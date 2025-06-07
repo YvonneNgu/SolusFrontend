@@ -1,4 +1,4 @@
-package com.example.solusfrontend
+package com.example.solusfrontend.services
 
 import android.content.Context
 import android.widget.Toast
@@ -6,6 +6,7 @@ import ai.picovoice.porcupine.PorcupineException
 import ai.picovoice.porcupine.PorcupineManager
 import ai.picovoice.porcupine.PorcupineManagerCallback
 import ai.picovoice.porcupine.PorcupineManagerErrorCallback
+import com.example.solusfrontend.BuildConfig
 import com.github.ajalt.timberkt.d
 import com.github.ajalt.timberkt.e
 import com.github.ajalt.timberkt.w

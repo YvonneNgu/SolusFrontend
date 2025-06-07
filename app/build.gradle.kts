@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.lifecycle.common)
     implementation(libs.androidx.savedstate.ktx)
@@ -90,6 +91,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.constraintlayout.compose)
     implementation(libs.timberkt)
+    implementation(libs.androidx.animation)
     
     // LiveKit dependencies
     implementation(libs.livekit.compose.components)

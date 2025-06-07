@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.example.solusfrontend.utils.PreferencesManager
 
 /**
  * PERMISSION HANDLER - Think of this as the "bouncer" at the door
@@ -15,11 +16,21 @@ import androidx.core.content.ContextCompat
  *
  * This function handles the entire permission flow:
  * 1. Check if we already have permission
- * 2. If not, ask the user for permission
- * 3. Handle their response (yes/no)
- * 4. Notify the app when we're good to go
+ * 2. If not, check if we've already asked before (to avoid repeated prompts)
+ * 3. If we haven't asked before, ask the user for permission
+ * 4. Handle their response (yes/no)
+ * 5. Notify the app when we're good to go
+ * 
+ * Note: For better user experience, we only ask for permission once and remember
+ * the user's choice to avoid annoying them with repeated prompts.
  */
-fun ComponentActivity.requireNeededPermissions(onPermissionsGranted: (() -> Unit)? = null) {
+fun ComponentActivity.requireNeededPermissions(
+    onPermissionsGranted: (() -> Unit)? = null,
+    onPermissionsDenied: (() -> Unit)? = null,
+    forceRequest: Boolean = false // Set to true to force permission request regardless of history
+) {
+    // Get our preferences manager to track permission request history
+    val prefsManager = PreferencesManager.getInstance(this)
 
     // SET UP THE PERMISSION REQUEST LAUNCHER
     // This is like preparing a formal request letter to the user
@@ -31,9 +42,16 @@ fun ComponentActivity.requireNeededPermissions(onPermissionsGranted: (() -> Unit
             // HANDLE THE USER'S RESPONSE
             // 'grants' is a map of [permission -> true/false] showing what the user decided
 
+            // Mark that we've asked for audio permission (regardless of outcome)
+            if (grants.containsKey(Manifest.permission.RECORD_AUDIO)) {
+                prefsManager.setAudioPermissionRequested(true)
+            }
+
             // Check if any permissions were denied
+            var anyDenied = false
             for (grant in grants.entries) {
                 if (!grant.value) { // If permission was denied
+                    anyDenied = true
                     // Show a toast message explaining what permission was missing
                     // This helps the user understand why the app might not work properly
                     Toast.makeText(
@@ -45,9 +63,13 @@ fun ComponentActivity.requireNeededPermissions(onPermissionsGranted: (() -> Unit
             }
 
             // SUCCESS CASE: All permissions were granted
-            // Only proceed if we have ALL the permissions we need AND there's a callback to notify
-            if (onPermissionsGranted != null && grants.all { it.value }) {
-                onPermissionsGranted() // Tell the app "All good! You can proceed now"
+            if (grants.all { it.value }) {
+                onPermissionsGranted?.invoke() // Tell the app "All good! You can proceed now"
+            } else if (anyDenied) {
+                // If permissions were denied, make sure service is not enabled
+                // This prevents the app from trying to start a service that can't work
+                prefsManager.setServiceEnabled(false)
+                onPermissionsDenied?.invoke() // Tell the app "User said no"
             }
         }
 
@@ -56,34 +78,31 @@ fun ComponentActivity.requireNeededPermissions(onPermissionsGranted: (() -> Unit
     val neededPermissions = listOf(Manifest.permission.RECORD_AUDIO)
         .filter {
             // Only keep the ones we don't already have
-            // It's like checking "Do I already have this key?" before asking for it
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_DENIED
         }
         .toTypedArray() // Convert to array format that the launcher expects
 
     // DECIDE WHAT TO DO NEXT
     if (neededPermissions.isNotEmpty()) {
-        // We're missing some permissions - time to ask the user
-        // This will show the system permission dialog
-        requestPermissionLauncher.launch(neededPermissions)
+        // We're missing some permissions
+        
+        // Check if we should show the permission request
+        // We only show it if:
+        // 1. We're forcing a request, OR
+        // 2. We haven't asked before (to avoid annoying the user with repeated prompts)
+        val shouldAskForPermission = forceRequest || !prefsManager.hasAudioPermissionBeenRequested()
+        
+        if (shouldAskForPermission) {
+            // Time to ask the user - this will show the system permission dialog
+            requestPermissionLauncher.launch(neededPermissions)
+        } else {
+            // We've already asked before and user denied, so don't ask again
+            // Make sure service is not enabled since permissions are missing
+            prefsManager.setServiceEnabled(false)
+            onPermissionsDenied?.invoke()
+        }
     } else {
         // We already have all the permissions we need - proceed immediately
-        // This is the "fast path" for users who already granted permission before
         onPermissionsGranted?.invoke()
     }
 }
-
-/**
- * SIMPLIFIED EXPLANATION:
- *
- * This function is like a polite doorman:
- * 1. "Do you already have a membership card?" (Check existing permissions)
- * 2. If yes: "Welcome in!" (Call onPermissionsGranted immediately)
- * 3. If no: "Can I see some ID please?" (Request permissions)
- * 4. User shows ID or refuses
- * 5. If they show ID: "Thank you, welcome in!" (Call onPermissionsGranted)
- * 6. If they refuse: "Sorry, you can't enter without ID" (Show error toast)
- *
- * This ensures the app only works when it has the necessary permissions,
- * and provides clear feedback to the user about what's happening.
- */
