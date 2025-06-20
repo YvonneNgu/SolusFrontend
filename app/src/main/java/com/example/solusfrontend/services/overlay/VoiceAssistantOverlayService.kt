@@ -8,14 +8,10 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
-import android.graphics.drawable.Icon
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.*
-import android.view.animation.Animation
-import android.view.animation.ScaleAnimation
 import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -38,7 +34,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -56,9 +51,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
-import androidx.core.app.Person
-import androidx.core.content.pm.ShortcutInfoCompat
-import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -81,8 +73,6 @@ import io.livekit.android.audio.ScreenAudioCapturer
 import io.livekit.android.compose.local.RoomScope
 import io.livekit.android.compose.state.AgentState
 import io.livekit.android.compose.state.rememberVoiceAssistant
-import io.livekit.android.compose.state.transcriptions.rememberParticipantTranscriptions
-import io.livekit.android.compose.state.transcriptions.rememberTranscriptions
 import io.livekit.android.compose.ui.audio.VoiceAssistantBarVisualizer
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalAudioTrack
@@ -91,9 +81,8 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import io.livekit.android.rpc.RpcError
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlin.math.roundToInt
+import androidx.compose.runtime.derivedStateOf
+import io.livekit.android.room.participant.Participant
 
 /**
  * Background Voice Assistant Service with Bubble UI and Screen Sharing
@@ -125,6 +114,10 @@ class VoiceAssistantOverlayService : Service(),
     private var isScreenShareOn by mutableStateOf(false)
     private var bubblePosition by mutableStateOf(IntOffset(0, 0))
     private var lastBubblePositionBeforeExpand by mutableStateOf(IntOffset(0, 0))
+    
+    // Persistent state for transcriptions to prevent loss during recomposition
+    private var transcriptionSegments by mutableStateOf<List<Transcription>>(emptyList())
+    private var isRoomConnected by mutableStateOf(false)
     
     // Debug mode - set to true to show debug visuals
     private val isDebugMode = true
@@ -607,13 +600,16 @@ class VoiceAssistantOverlayService : Service(),
         }
         bubbleView = null
 
-        // Reset state
+        // Reset state but keep transcriptions in case we reconnect
         isVoiceAssistantActive = false
         isBubbleExpanded = false
         isMicOn = true
         isScreenShareOn = false
         connectionUrl = null
         connectionToken = null
+        
+        // Log transcription persistence state
+        Timber.d { "UI-DEBUG: Keeping ${transcriptionSegments.size} transcription segments in memory for potential reconnect" }
 
         // Resume wake word detection
         wakeWordDetector.startListening()
@@ -714,6 +710,31 @@ class VoiceAssistantOverlayService : Service(),
                         prevRoomState = room.state
                     }
                     
+                    // Use our custom rememberTranscriptions function
+                    val allTranscriptions = rememberTranscriptions(room)
+                    
+                    // Capture transcription segments for persistence
+                    LaunchedEffect(allTranscriptions) {
+                        if (allTranscriptions != transcriptionSegments) {
+                            Timber.d { "UI-DEBUG: Updating persisted transcription segments, count: ${allTranscriptions.size}" }
+                            transcriptionSegments = allTranscriptions
+                        }
+                    }
+                    
+                    // Get the local participant's transcriptions
+                    val localParticipantIdentity = room.localParticipant.identity
+                    val localTranscriptions = remember(allTranscriptions) {
+                        derivedStateOf {
+                            allTranscriptions.filter { it.identity == localParticipantIdentity }
+                        }
+                    }
+                    
+                    // Update connection state
+                    LaunchedEffect(room.state) {
+                        isRoomConnected = room.state == Room.State.CONNECTED
+                        Timber.d { "UI-DEBUG: Room connection state updated: ${room.state}, isRoomConnected: $isRoomConnected" }
+                    }
+                    
                     // Debug connection status
                     if (isDebugMode) {
                         Text(
@@ -782,6 +803,8 @@ class VoiceAssistantOverlayService : Service(),
                             VoiceAssistantConversationPanelContent(
                                 room = room,
                                 voiceAssistant = voiceAssistant,
+                                transcriptions = allTranscriptions, // Pass our custom transcriptions
+                                localIdentity = localParticipantIdentity, // Pass the local identity for message alignment
                                 isMicOn = isMicOn,
                                 isScreenShareOn = isScreenShareOn,
                                 onMicToggle = { toggleMic() },
@@ -831,10 +854,48 @@ class VoiceAssistantOverlayService : Service(),
                 // Simple bubble when no connection
                 Timber.d { "UI-DEBUG: Rendering simple bubble (no connection)" }
                 
+                // If we have persisted transcriptions but no current connection
+                if (isExpanded && transcriptionSegments.isNotEmpty()) {
+                    Timber.d { "UI-DEBUG: Showing persisted transcriptions without active room, count: ${transcriptionSegments.size}" }
+                    
+                    // Conversation panel with persisted transcriptions
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(panelHeight.dp)
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                            )
+                            .padding(1.dp)
+                            .then(
+                                if (isDebugMode) Modifier.border(
+                                    width = 2.dp,
+                                    color = Color.Yellow, // Different color to indicate persisted state
+                                    shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                                ) else Modifier
+                            )
+                    ) {
+                        // Conversation panel with persisted state
+                        VoiceAssistantConversationPanelContent(
+                            room = null,
+                            voiceAssistant = null,
+                            transcriptions = transcriptionSegments, // Use persisted transcription segments
+                            localIdentity = null, // No local identity when disconnected
+                            isMicOn = isMicOn,
+                            isScreenShareOn = isScreenShareOn,
+                            onMicToggle = { toggleMic() },
+                            onScreenShareToggle = { toggleScreenSharing() },
+                            onSendMessage = { message -> handleMessage(message) }
+                        )
+                    }
+                }
+                
                 // Debug message when expanded but no connection
                 if (isDebugMode && isExpanded) {
                     Text(
-                        text = "DEBUG: No connection - URL: ${connectionUrl != null}, Token: ${connectionToken != null}",
+                        text = "DEBUG: No connection - URL: ${connectionUrl != null}, Token: ${connectionToken != null}, Persisted segments: ${transcriptionSegments.size}",
                         color = Color.Red,
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -937,8 +998,10 @@ class VoiceAssistantOverlayService : Service(),
     @OptIn(ExperimentalComposeUiApi::class)
     @Composable
     private fun VoiceAssistantConversationPanelContent(
-        room: Room,
-        voiceAssistant: io.livekit.android.compose.state.VoiceAssistant,
+        room: Room?,
+        voiceAssistant: io.livekit.android.compose.state.VoiceAssistant?,
+        transcriptions: List<Transcription>,
+        localIdentity: Participant.Identity?,
         isMicOn: Boolean,
         isScreenShareOn: Boolean,
         onMicToggle: () -> Unit,
@@ -952,7 +1015,7 @@ class VoiceAssistantOverlayService : Service(),
         var lastActivityTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusRequester = remember { FocusRequester() }
-        val agentState = voiceAssistant.state
+        val agentState = voiceAssistant?.state ?: AgentState.UNKNOWN
         val coroutineScope = rememberCoroutineScope()
         
         // Log panel dimensions and state only when they change
@@ -970,6 +1033,74 @@ class VoiceAssistantOverlayService : Service(),
             Timber.d { "UI-DEBUG: Panel dimensions - width: $screenWidth, height: $panelHeight, " +
                     "agent state: $agentState, mic: $isMicOn, screen share: $isScreenShareOn" }
             previousState.value = currentState
+        }
+
+        // Process transcriptions to properly segment continuous speech
+        // This approach keeps complete utterances rather than just showing the latest update
+        val displayTranscriptions = remember(transcriptions) {
+            derivedStateOf {
+                // Group by identity first
+                val byParticipant = transcriptions.groupBy { it.identity }
+                
+                // For each participant, process their transcriptions
+                val processedSegments = mutableListOf<Transcription>()
+                
+                byParticipant.forEach { (identity, participantTranscriptions) ->
+                    // Group by conversation segments - we define a new segment when:
+                    // 1. The transcription has final=true, indicating a complete utterance
+                    // 2. There's a significant time gap between transcriptions (e.g., > 2 seconds)
+                    // 3. The text changes drastically (e.g., completely new sentence starts)
+                    
+                    // Sort by first received time
+                    val sortedTranscriptions = participantTranscriptions.sortedBy { 
+                        it.transcriptionSegment.firstReceivedTime 
+                    }
+                    
+                    var currentUtterance: Transcription? = null
+                    var lastTimeStamp = 0L
+                    
+                    for (transcription in sortedTranscriptions) {
+                        val segment = transcription.transcriptionSegment
+                        val currentTime = segment.lastReceivedTime
+                        
+                        // Start a new segment if:
+                        val isNewSegment = when {
+                            currentUtterance == null -> true
+                            segment.final -> true
+                            (currentTime - lastTimeStamp) > 2000 -> true  // 2 second gap
+                            // If the new text doesn't extend the previous text, it's likely a new utterance
+                            !segment.text.startsWith(currentUtterance.transcriptionSegment.text) -> true
+                            else -> false
+                        }
+                        
+                        if (isNewSegment) {
+                            // If we had a previous utterance, add it to our results
+                            currentUtterance?.let { 
+                                if (it.transcriptionSegment.text.isNotBlank()) {
+                                    processedSegments.add(it) 
+                                }
+                            }
+                            // Start new utterance
+                            currentUtterance = transcription
+                        } else {
+                            // Update existing utterance with latest version
+                            currentUtterance = transcription
+                        }
+                        
+                        lastTimeStamp = currentTime
+                    }
+                    
+                    // Add the final utterance if it exists
+                    currentUtterance?.let { 
+                        if (it.transcriptionSegment.text.isNotBlank()) {
+                            processedSegments.add(it) 
+                        }
+                    }
+                }
+                
+                // Sort all processed segments by time for proper conversation flow
+                processedSegments.sortedBy { it.transcriptionSegment.firstReceivedTime }
+            }
         }
 
         // FIXED: Use Surface instead of Column directly for better visibility
@@ -1037,7 +1168,7 @@ class VoiceAssistantOverlayService : Service(),
                 // Control microphone
                 LaunchedEffect(isMicOn) {
                     try {
-                        room.localParticipant.setMicrophoneEnabled(isMicOn)
+                        room?.localParticipant?.setMicrophoneEnabled(isMicOn)
                         Timber.i { "Microphone ${if (isMicOn) "enabled" else "disabled"}" }
                     } catch (e: Exception) {
                         Timber.e { "Failed to toggle microphone: $e" }
@@ -1062,20 +1193,37 @@ class VoiceAssistantOverlayService : Service(),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    VoiceAssistantBarVisualizer(
-                        voiceAssistant = voiceAssistant,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    if (voiceAssistant != null) {
+                        VoiceAssistantBarVisualizer(
+                            voiceAssistant = voiceAssistant,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    } else {
+                        // Placeholder when voice assistant isn't available
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Voice visualizer unavailable",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Conversation history with better container
-                val segments = rememberTranscriptions()
-                val localSegments = rememberParticipantTranscriptions(room.localParticipant)
                 val lazyListState = rememberLazyListState()
+
+                // Log when transcriptions change
+                LaunchedEffect(displayTranscriptions.value) {
+                    Timber.d { "UI-DEBUG: Processed conversation transcriptions, count: ${displayTranscriptions.value.size}" }
+                }
 
                 Surface(
                     modifier = Modifier
@@ -1091,7 +1239,7 @@ class VoiceAssistantOverlayService : Service(),
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        if (segments.isEmpty()) {
+                        if (displayTranscriptions.value.isEmpty()) {
                             item {
                                 Text(
                                     text = "Start speaking or type a message...",
@@ -1102,11 +1250,12 @@ class VoiceAssistantOverlayService : Service(),
                             }
                         }
 
+                        // Use the processed transcriptions
                         items(
-                            items = segments,
-                            key = { segment -> segment.id }
-                        ) { segment ->
-                            if (localSegments.contains(segment)) {
+                            items = displayTranscriptions.value,
+                            key = { transcription -> transcription.transcriptionSegment.id }
+                        ) { transcription ->
+                            if (localIdentity != null && transcription.identity == localIdentity) {
                                 // User message
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1118,7 +1267,7 @@ class VoiceAssistantOverlayService : Service(),
                                         shape = RoundedCornerShape(12.dp, 4.dp, 12.dp, 12.dp)
                                     ) {
                                         Text(
-                                            text = segment.text,
+                                            text = transcription.transcriptionSegment.text,
                                             modifier = Modifier.padding(8.dp),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onPrimary
@@ -1138,7 +1287,7 @@ class VoiceAssistantOverlayService : Service(),
                                         tonalElevation = 2.dp
                                     ) {
                                         Text(
-                                            text = segment.text,
+                                            text = transcription.transcriptionSegment.text,
                                             modifier = Modifier.padding(8.dp),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurface
@@ -1151,9 +1300,9 @@ class VoiceAssistantOverlayService : Service(),
                 }
 
                 // Auto-scroll to latest message
-                LaunchedEffect(segments) {
-                    if (segments.isNotEmpty()) {
-                        lazyListState.scrollToItem((segments.size - 1).coerceAtLeast(0))
+                LaunchedEffect(displayTranscriptions.value) {
+                    if (displayTranscriptions.value.isNotEmpty()) {
+                        lazyListState.scrollToItem((displayTranscriptions.value.size - 1).coerceAtLeast(0))
                         lastActivityTime = System.currentTimeMillis()
                     }
                 }
@@ -1244,7 +1393,7 @@ class VoiceAssistantOverlayService : Service(),
                             )
                             if (isMicOn) {
                                 Text(
-                                    text = when (agentState) { // wrong code
+                                    text = when (agentState) {
                                         AgentState.LISTENING -> "Listening..."
                                         AgentState.THINKING -> "Thinking..."
                                         AgentState.SPEAKING -> "Speaking..."
