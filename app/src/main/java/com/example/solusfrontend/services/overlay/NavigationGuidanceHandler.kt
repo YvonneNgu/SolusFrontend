@@ -14,6 +14,7 @@ import android.view.WindowManager
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -28,6 +29,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,9 +67,9 @@ class NavigationGuidanceHandler(private val context: Context) {
     private val lifecycleOwner = OverlayLifecycleOwner()
 
     companion object {
-        private const val OVERLAY_DISPLAY_DURATION = 10000L // 10 seconds
-        private const val ARROW_SIZE = 60f
-        private const val ARROW_STROKE_WIDTH = 8f
+        private const val OVERLAY_DISPLAY_DURATION = 300000L // 5 min
+        private const val ARROW_SIZE = 100f
+        private const val ARROW_STROKE_WIDTH = 13f
         private const val HIGHLIGHT_PADDING = 16f
     }
 
@@ -258,6 +261,7 @@ class NavigationGuidanceHandler(private val context: Context) {
         Timber.d { "Arrow overlay created at center: ($centerX, $centerY), bounds: [$left, $top, $right, $bottom]" }
     }
 
+    // 4. Enhanced pulse animation with more dramatic effect
     @Composable
     private fun NavigationOverlayComposable(
         targetCenterX: Int,
@@ -268,24 +272,37 @@ class NavigationGuidanceHandler(private val context: Context) {
         targetBottom: Int,
         instructionText: String
     ) {
-        // Infinite pulse animation
+        // Combined scale and movement animation for arrow
         val infiniteTransition = rememberInfiniteTransition(label = "pulse_transition")
-        val pulseScale by infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 1.2f,
+        val arrowScale by infiniteTransition.animateFloat(
+            initialValue = 0.85f, // Smaller scale (nearer to box)
+            targetValue = 1.1f,  // Larger scale (further from box)
             animationSpec = infiniteRepeatable(
                 animation = tween(
-                    durationMillis = 800,
-                    easing = FastOutSlowInEasing
+                    durationMillis = 1200,
+                    easing = EaseInOutSine
                 ),
                 repeatMode = RepeatMode.Reverse
             ),
-            label = "pulse_scale"
+            label = "arrow_scale"
+        )
+
+        // Movement offset - when large (1.3x), move 100px away from box
+        val arrowMovement by infiniteTransition.animateFloat(
+            initialValue = 0f,   // No movement when small
+            targetValue = 100f,  // 100px away when large
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = 1200,
+                    easing = EaseInOutSine
+                ),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "arrow_movement"
         )
 
         var isVisible by remember { mutableStateOf(false) }
 
-        // Trigger entrance animation
         LaunchedEffect(Unit) {
             isVisible = true
         }
@@ -293,17 +310,22 @@ class NavigationGuidanceHandler(private val context: Context) {
         val alpha by animateFloatAsState(
             targetValue = if (isVisible) 1f else 0f,
             animationSpec = tween(
-                durationMillis = 300,
-                easing = FastOutSlowInEasing
+                durationMillis = 400, // Slightly slower entrance
+                easing = EaseOutCubic
             ),
             label = "instruction_alpha"
         )
 
         Box(modifier = Modifier.fillMaxSize().alpha(alpha)) {
-            // Draw the navigation overlay (arrow and highlight)
-            Canvas(
-                modifier = Modifier.fillMaxSize()
-            ) {
+            // Semi-transparent overlay to dim background
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(
+                    color = Color(0x20000000), // Very subtle dark overlay
+                    size = size
+                )
+            }
+
+            Canvas(modifier = Modifier.fillMaxSize()) {
                 drawNavigationOverlay(
                     targetCenterX = targetCenterX,
                     targetCenterY = targetCenterY,
@@ -311,11 +333,11 @@ class NavigationGuidanceHandler(private val context: Context) {
                     targetTop = targetTop,
                     targetRight = targetRight,
                     targetBottom = targetBottom,
-                    pulseScale = pulseScale
+                    arrowScale = arrowScale,
+                    arrowMovement = arrowMovement // Add movement parameter
                 )
             }
 
-            // Position instruction text dynamically based on bounding box
             InstructionTextPositioned(
                 instructionText = instructionText,
                 targetLeft = targetLeft,
@@ -328,57 +350,6 @@ class NavigationGuidanceHandler(private val context: Context) {
         }
     }
 
-    @Composable
-    private fun BoxScope.InstructionTextPositioned(
-        instructionText: String,
-        targetLeft: Int,
-        targetTop: Int,
-        targetRight: Int,
-        targetBottom: Int,
-        targetCenterX: Int,
-        targetCenterY: Int
-    ) {
-        // Determine optimal position for instruction text based on target location
-        val screenHeight = screenHeight.toFloat()
-        val screenWidth = screenWidth.toFloat()
-
-        // Calculate if there's enough space above or below the target
-        val spaceAbove = targetTop
-        val spaceBelow = screenHeight - targetBottom
-        val spaceLeft = targetLeft
-        val spaceRight = screenWidth - targetRight
-
-        // Preferred positioning: above if there's space, otherwise below, otherwise to the side
-        val (alignment, offsetX, offsetY) = when {
-            spaceAbove > 120 -> Triple(Alignment.TopCenter, 0, targetTop - 60)
-            spaceBelow > 120 -> Triple(Alignment.TopCenter, 0, targetBottom + 40)
-            spaceLeft > 200 -> Triple(Alignment.CenterStart, targetLeft - 200, targetCenterY)
-            spaceRight > 200 -> Triple(Alignment.CenterStart, targetRight + 20, targetCenterY)
-            else -> Triple(Alignment.TopCenter, 0, maxOf(100, targetTop - 60)) // Fallback to top with minimum offset
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .offset(x = offsetX.dp, y = offsetY.dp),
-            contentAlignment = alignment
-        ) {
-            Text(
-                text = instructionText,
-                modifier = Modifier
-                    .background(
-                        color = Color(0xDD000000),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .padding(horizontal = 32.dp, vertical = 16.dp),
-                color = androidx.compose.ui.graphics.Color.White,
-                fontSize = 16.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 3
-            )
-        }
-    }
-
     private fun DrawScope.drawNavigationOverlay(
         targetCenterX: Int,
         targetCenterY: Int,
@@ -386,15 +357,17 @@ class NavigationGuidanceHandler(private val context: Context) {
         targetTop: Int,
         targetRight: Int,
         targetBottom: Int,
-        pulseScale: Float
+        arrowScale: Float,
+        arrowMovement: Float
     ) {
         // Draw highlight around target element
         drawHighlight(targetLeft, targetTop, targetRight, targetBottom)
 
         // Draw arrow pointing to target
-        drawArrow(targetCenterX, targetCenterY, targetTop, targetBottom, pulseScale)
+        drawArrow(targetCenterX, targetCenterY, targetTop, targetBottom, arrowScale, arrowMovement)
     }
 
+    // 1. Enhanced highlight with glow effect and better colors
     private fun DrawScope.drawHighlight(
         targetLeft: Int,
         targetTop: Int,
@@ -412,86 +385,229 @@ class NavigationGuidanceHandler(private val context: Context) {
             )
         )
 
-        val dashPathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 10f), 0f)
+        // Draw glow effect (multiple layers with decreasing opacity)
+        val glowColors = listOf(
+            Color(0x80FF6B35), // Outer glow - more transparent
+            Color(0xAAFF6B35), // Middle glow
+            Color(0xFFFF6B35)  // Inner bright color
+        )
 
+        glowColors.forEachIndexed { index, color ->
+            val strokeWidth = (12f - index * 2f)
+            drawRoundRect(
+                color = color,
+                topLeft = rect.topLeft,
+                size = rect.size,
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(16f, 16f),
+                style = Stroke(width = strokeWidth)
+            )
+        }
+
+        // Animated dashed border on top
+        val dashPathEffect = PathEffect.dashPathEffect(floatArrayOf(25f, 10f), 0f)
         drawRoundRect(
-            color = Color(0x44FF4444),
+            color = androidx.compose.ui.graphics.Color.White,
             topLeft = rect.topLeft,
             size = rect.size,
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f, 12f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(16f, 16f),
             style = Stroke(
-                width = 6f,
+                width = 3f,
                 pathEffect = dashPathEffect
             )
         )
     }
 
+    // 2. Enhanced arrow with scale and movement animation
     private fun DrawScope.drawArrow(
         targetCenterX: Int,
         targetCenterY: Int,
         targetTop: Int,
         targetBottom: Int,
-        pulseScale: Float
+        arrowScale: Float, // Scale for the entire arrow
+        arrowMovement: Float // Additional movement distance from box
     ) {
         val screenHeight = size.height
-        val arrowStartY = if (targetCenterY > screenHeight / 2) {
-            // Target is in bottom half, arrow points down from above
-            targetTop - ARROW_SIZE * 2
-        } else {
-            // Target is in top half, arrow points up from below
-            targetBottom + ARROW_SIZE * 2
-        }
+        val pointingDown = targetCenterY > screenHeight / 2
 
         val arrowTipX = targetCenterX.toFloat()
-        val arrowTipY = targetCenterY.toFloat()
+
+        // Calculate tip position with movement offset
+        val baseTipY = if (pointingDown) {
+            (targetTop - 50).toFloat() // Base position: 10px above the top
+        } else {
+            (targetBottom + 50).toFloat() // Base position: 10px below the bottom
+        }
+
+        // Apply movement offset - move further away from box when large
+        val arrowTipY = if (pointingDown) {
+            baseTipY - arrowMovement // Move up when pointing down (further above)
+        } else {
+            baseTipY + arrowMovement // Move down when pointing up (further below)
+        }
+
+        // Base arrow length that will be scaled
+        val baseArrowLength = ARROW_SIZE * 2.5f
+        val scaledArrowLength = baseArrowLength * arrowScale
+
+        val arrowStartY = if (pointingDown) {
+            arrowTipY - scaledArrowLength // Arrow starts above and points down
+        } else {
+            arrowTipY + scaledArrowLength // Arrow starts below and points up
+        }
+
         val arrowBaseX = arrowTipX
         val arrowBaseY = arrowStartY
 
-        val arrowColor = Color(0xFFFF4444)
+        val arrowColor = Color(0xFFFF6B35)
+        val arrowGlowColor = Color(0x80FF6B35)
 
-        // Draw arrow shaft
+        // Calculate arrow direction and head (scaled)
+        val angle = atan2(arrowTipY - arrowBaseY, arrowTipX - arrowBaseX)
+        val scaledArrowHeadLength = ARROW_SIZE * 0.8f * arrowScale
+        val arrowHeadAngle = Math.PI / 5
+
+        // Calculate where the line should end (at the back of the scaled arrow head)
+        val lineEndOffsetDistance = scaledArrowHeadLength * 0.7f
+        val lineEndX = arrowTipX - lineEndOffsetDistance * cos(angle)
+        val lineEndY = arrowTipY - lineEndOffsetDistance * sin(angle)
+
+        // Scale the stroke width as well
+        val scaledStrokeWidth = ARROW_STROKE_WIDTH * arrowScale
+        val scaledGlowWidth = (ARROW_STROKE_WIDTH + 8f) * arrowScale
+
+        // Draw arrow shaft with glow effect (scaled)
+        // Glow layer
         drawLine(
-            color = arrowColor,
+            color = arrowGlowColor,
             start = Offset(arrowBaseX, arrowBaseY),
-            end = Offset(arrowTipX, arrowTipY),
-            strokeWidth = ARROW_STROKE_WIDTH,
+            end = Offset(lineEndX.toFloat(), lineEndY.toFloat()),
+            strokeWidth = scaledGlowWidth,
             cap = StrokeCap.Round
         )
 
-        // Calculate arrow direction and head
-        val angle = atan2(arrowTipY - arrowBaseY, arrowTipX - arrowBaseX)
-        val arrowHeadLength = ARROW_SIZE * 0.6f
-        val arrowHeadAngle = Math.PI / 6 // 30 degrees
+        // Main arrow shaft
+        drawLine(
+            color = arrowColor,
+            start = Offset(arrowBaseX, arrowBaseY),
+            end = Offset(lineEndX.toFloat(), lineEndY.toFloat()),
+            strokeWidth = scaledStrokeWidth,
+            cap = StrokeCap.Round
+        )
 
+        // Create scaled arrow head
         val arrowPath = Path().apply {
             moveTo(arrowTipX, arrowTipY)
             lineTo(
-                (arrowTipX - arrowHeadLength * cos(angle - arrowHeadAngle)).toFloat(),
-                (arrowTipY - arrowHeadLength * sin(angle - arrowHeadAngle)).toFloat()
+                (arrowTipX - scaledArrowHeadLength * cos(angle - arrowHeadAngle)).toFloat(),
+                (arrowTipY - scaledArrowHeadLength * sin(angle - arrowHeadAngle)).toFloat()
             )
             lineTo(
-                (arrowTipX - arrowHeadLength * cos(angle + arrowHeadAngle)).toFloat(),
-                (arrowTipY - arrowHeadLength * sin(angle + arrowHeadAngle)).toFloat()
+                (arrowTipX - scaledArrowHeadLength * cos(angle + arrowHeadAngle)).toFloat(),
+                (arrowTipY - scaledArrowHeadLength * sin(angle + arrowHeadAngle)).toFloat()
             )
             close()
         }
 
-        // Apply pulse scale around the arrow tip point and draw arrow head
-        drawIntoCanvas { canvas ->
-            canvas.save()
-            // Translate to pivot point
-            canvas.translate(arrowTipX, arrowTipY)
-            // Scale around origin (which is now the pivot point)
-            canvas.scale(pulseScale, pulseScale)
-            // Translate back
-            canvas.translate(-arrowTipX, -arrowTipY)
+        // Draw arrow head with glow (scaled)
+        val scaledGlowStrokeWidth = 6f * arrowScale
 
-            drawPath(
-                path = arrowPath,
-                color = arrowColor,
-                style = androidx.compose.ui.graphics.drawscope.Fill
+        // Arrow head glow
+        drawPath(
+            path = arrowPath,
+            color = arrowGlowColor,
+            style = Stroke(width = scaledGlowStrokeWidth)
+        )
+
+        // Main arrow head
+        drawPath(
+            path = arrowPath,
+            color = arrowColor,
+            style = androidx.compose.ui.graphics.drawscope.Fill
+        )
+    }
+
+    // 3. Enhanced instruction text with better contrast and effects
+    @Composable
+    private fun BoxScope.InstructionTextPositioned(
+        instructionText: String,
+        targetLeft: Int,
+        targetTop: Int,
+        targetRight: Int,
+        targetBottom: Int,
+        targetCenterX: Int,
+        targetCenterY: Int
+    ) {
+        val screenHeight = screenHeight.toFloat()
+        val screenWidth = screenWidth.toFloat()
+
+        val spaceAbove = targetTop
+        val spaceBelow = screenHeight - targetBottom
+        val spaceLeft = targetLeft
+        val spaceRight = screenWidth - targetRight
+
+        val (alignment, offsetX, offsetY) = when {
+            spaceAbove > 120 -> Triple(Alignment.TopCenter, 0, targetTop - 60)
+            spaceBelow > 120 -> Triple(Alignment.TopCenter, 0, targetBottom + 40)
+            spaceLeft > 200 -> Triple(Alignment.CenterStart, targetLeft - 200, targetCenterY)
+            spaceRight > 200 -> Triple(Alignment.CenterStart, targetRight + 20, targetCenterY)
+            else -> Triple(Alignment.TopCenter, 0, maxOf(100, targetTop - 60))
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .offset(x = offsetX.dp, y = offsetY.dp),
+            contentAlignment = alignment
+        ) {
+            // Shadow/glow effect
+            Text(
+                text = instructionText,
+                modifier = Modifier
+                    .offset(x = 2.dp, y = 2.dp)
+                    .background(
+                        color = Color(0x60000000),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 36.dp, vertical = 18.dp),
+                color = androidx.compose.ui.graphics.Color.Transparent,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 3
             )
-            canvas.restore()
+
+            // Main text with enhanced styling
+            Text(
+                text = instructionText,
+                modifier = Modifier
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xEE1A1A1A),
+                                Color(0xEE000000)
+                            )
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        width = 2.dp,
+                        color = Color(0xFFFF6B35),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 36.dp, vertical = 18.dp),
+                color = androidx.compose.ui.graphics.Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = androidx.compose.ui.graphics.Color.Black,
+                        offset = Offset(2f, 2f),
+                        blurRadius = 4f
+                    )
+                )
+            )
         }
     }
 

@@ -120,7 +120,7 @@ class VoiceAssistantOverlayService : Service(),
     private var isRoomConnected by mutableStateOf(false)
     
     // Debug mode - set to true to show debug visuals
-    private val isDebugMode = true
+    private val isDebugMode = false
 
     // Connection details for LiveKit
     private var connectionUrl: String? = null
@@ -183,6 +183,7 @@ class VoiceAssistantOverlayService : Service(),
 
     private suspend fun registerRpcMethods(room: Room) {
         try {
+            // Display visual cues
             room.localParticipant.registerRpcMethod("display-navigation-guidance") { data ->
                 try {
                     Timber.i { "Received navigation guidance RPC call from ${data.callerIdentity}" }
@@ -195,6 +196,7 @@ class VoiceAssistantOverlayService : Service(),
                 }
             }
 
+            // Remove visual cues
             room.localParticipant.registerRpcMethod("clear-navigation-guidance") { data ->
                 try {
                     navigationGuidanceHandler.clearCurrentGuidance()
@@ -202,18 +204,20 @@ class VoiceAssistantOverlayService : Service(),
                     "Navigation guidance cleared successfully"
                 } catch (e: Exception) {
                     Timber.e(e) { "Error clearing navigation guidance: ${e.message}" }
-                    throw RpcError(code = 1501, message = "Failed to clear navigation guidance: ${e.message}")
+                    throw RpcError(code = 1500, message = "Failed to clear navigation guidance: ${e.message}")
                 }
             }
 
-            room.localParticipant.registerRpcMethod("is-guidance-active") { data ->
+            // Close UI: bubble & conversation panel
+            room.localParticipant.registerRpcMethod("close-voice-assistant") { data ->
                 try {
-                    val isActive = navigationGuidanceHandler.isGuidanceActive()
-                    Timber.d { "Navigation guidance active status: $isActive" }
-                    if (isActive) "active" else "inactive"
+                    Timber.i { "Received close voice assistant RPC call from ${data.callerIdentity}" }
+                    closeVoiceAssistant()
+                    Timber.i { "Voice assistant closed successfully" }
+                    "Voice assistant closed successfully"
                 } catch (e: Exception) {
-                    Timber.e(e) { "Error checking guidance status: ${e.message}" }
-                    throw RpcError(code = 1502, message = "Failed to check guidance status: ${e.message}")
+                    Timber.e(e) { "Error closing voice assistant: ${e.message}" }
+                    throw RpcError(code = 1500, message = "Failed to close voice assistant: ${e.message}")
                 }
             }
 
@@ -980,15 +984,15 @@ class VoiceAssistantOverlayService : Service(),
                 IconButton(
                     onClick = onClose,
                     modifier = Modifier
-                        .size(20.dp)
-                        .offset(x = 20.dp, y = (-20).dp)
+                        .size(24.dp)
+                        .offset(x = 25.dp, y = (-25).dp)
                         .background(MaterialTheme.colorScheme.error, CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
                         tint = MaterialTheme.colorScheme.onError,
-                        modifier = Modifier.size(12.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                 }
             }
@@ -1134,28 +1138,14 @@ class VoiceAssistantOverlayService : Service(),
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Voice Assistant",
+                            text = "Solus is ${when (agentState) {
+                                AgentState.LISTENING -> "Listening"
+                                AgentState.THINKING -> "Thinking"
+                                AgentState.SPEAKING -> "Speaking"
+                                else -> "Ready"
+                            }}",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    // Screen share button with better styling
-                    Surface(
-                        onClick = onScreenShareToggle,
-                        modifier = Modifier.size(32.dp),
-                        shape = CircleShape,
-                        color = if (isScreenShareOn) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_share_screen),
-                            contentDescription = if (isScreenShareOn) "Stop screen sharing" else "Start screen sharing",
-                            tint = if (isScreenShareOn) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .padding(6.dp)
-                                .size(20.dp)
                         )
                     }
                 }
@@ -1177,9 +1167,9 @@ class VoiceAssistantOverlayService : Service(),
 
                 // Auto-close after inactivity
                 LaunchedEffect(lastActivityTime) {
-                    delay(30000)
+                    delay(300000)
                     val timeSinceLastActivity = System.currentTimeMillis() - lastActivityTime
-                    if (timeSinceLastActivity >= 30000) {
+                    if (timeSinceLastActivity >= 300000) {
                         Timber.i { "Auto-closing due to inactivity" }
                         closeVoiceAssistant()
                     }
@@ -1310,6 +1300,7 @@ class VoiceAssistantOverlayService : Service(),
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Text input with better styling
+                /*
                 OutlinedTextField(
                     value = textInput,
                     onValueChange = { textInput = it },
@@ -1351,16 +1342,17 @@ class VoiceAssistantOverlayService : Service(),
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
-                )
+                )*/
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Controls with better layout
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Microphone control
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1384,46 +1376,44 @@ class VoiceAssistantOverlayService : Service(),
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        Column {
-                            Text(
-                                text = if (isMicOn) "Listening" else "Muted",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isMicOn) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline
-                            )
-                            if (isMicOn) {
-                                Text(
-                                    text = when (agentState) {
-                                        AgentState.LISTENING -> "Listening..."
-                                        AgentState.THINKING -> "Thinking..."
-                                        AgentState.SPEAKING -> "Speaking..."
-                                        else -> "Ready"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                        Text(
+                            text = if (isMicOn) "Listening" else "Muted",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isMicOn) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                        )
                     }
 
-                    // Status indicator
-                    if (isScreenShareOn) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
+                    // Screen share control
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            onClick = onScreenShareToggle,
+                            modifier = Modifier.size(40.dp),
+                            shape = CircleShape,
+                            color = if (isScreenShareOn) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
                         ) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_share_screen),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Sharing",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
+                                contentDescription = if (isScreenShareOn) "Stop screen sharing" else "Start screen sharing",
+                                tint = if (isScreenShareOn) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .size(24.dp)
                             )
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                            text = if (isScreenShareOn) "Sharing" else "Share",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isScreenShareOn) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                        )
                     }
                 }
             }

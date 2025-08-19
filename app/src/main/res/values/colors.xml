@@ -2,4 +2,9 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="overlay_background">#E6000000</color>
+    <color name="user_message_bg">#FF2196F3</color>
+    <color name="solus_message_bg">#FF424242</color>
+    <color name="floating_button_primary">#FF0099FF</color>
+    <color name="floating_button_secondary">#CC0066CC</color>
 </resources>
